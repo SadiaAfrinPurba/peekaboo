@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import 'data/vault.dart';
-import 'screens/gallery_screen.dart';
+import 'screens/owner_home.dart';
 import 'screens/recipient_gallery_screen.dart';
 import 'screens/recipient_screen.dart';
 import 'theme/app_theme.dart';
@@ -24,14 +22,11 @@ class PeekabooApp extends StatelessWidget {
       );
     }
 
-    return ChangeNotifierProvider(
-      create: (_) => Vault()..load(),
-      child: MaterialApp(
-        title: 'Peekaboo',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.theme,
-        onGenerateRoute: _onGenerateRoute,
-      ),
+    return MaterialApp(
+      title: 'Peekaboo',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.theme,
+      onGenerateRoute: _onGenerateRoute,
     );
   }
 
@@ -61,7 +56,7 @@ class PeekabooApp extends StatelessWidget {
 
     return MaterialPageRoute(
       settings: settings,
-      builder: (_) => const GalleryScreen(),
+      builder: (_) => const OwnerHome(),
     );
   }
 }

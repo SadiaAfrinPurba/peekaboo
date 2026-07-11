@@ -17,19 +17,10 @@ Future<void> main() async {
       url: SupabaseConfig.url,
       anonKey: SupabaseConfig.publishableKey,
     );
-
-    // The owner is signed in silently & anonymously — no login screen, and the
-    // session persists on this device. (Upgrade path: link an email so the
-    // vault follows the user across devices.) Recipients viewing a link don't
-    // need this, so a failure here is non-fatal.
-    final auth = Supabase.instance.client.auth;
-    if (auth.currentSession == null) {
-      try {
-        await auth.signInAnonymously();
-      } catch (_) {
-        // Anonymous provider likely disabled — the gallery surfaces guidance.
-      }
-    }
+    // No automatic sign-in: the owner signs in with an email magic link (see
+    // AuthService / OwnerHome), which keeps the vault private. Recipients open a
+    // share link and never sign in — the get_gallery/get_share functions serve
+    // them through the public anon key.
   } catch (e) {
     bootError = e.toString();
   }

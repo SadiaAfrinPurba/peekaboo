@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../data/vault.dart';
 import '../models/photo.dart';
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 import 'family_link_sheet.dart';
 import 'protected_viewer_screen.dart';
@@ -88,6 +89,28 @@ class GalleryScreen extends StatelessWidget {
             icon: const Icon(Icons.group_outlined),
             tooltip: 'Family gallery link',
             onPressed: () => showFamilyLinkSheet(context, context.read<Vault>()),
+          ),
+          PopupMenuButton<String>(
+            color: AppTheme.surfaceHigh,
+            icon: const Icon(Icons.account_circle_outlined),
+            onSelected: (v) {
+              if (v == 'signout') AuthService.signOut();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                enabled: false,
+                child: Text(
+                  AuthService.user?.email ?? 'Signed in',
+                  style: const TextStyle(
+                      color: AppTheme.textMuted, fontSize: 12),
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'signout',
+                child: Text('Sign out'),
+              ),
+            ],
           ),
         ],
       ),
