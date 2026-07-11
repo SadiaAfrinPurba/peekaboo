@@ -9,9 +9,18 @@ import 'package:url_launcher/url_launcher.dart';
 /// Facebook/TikTok/Instagram feed or story composer has no way to turn a link
 /// into a post — so those paths are closed by construction.
 class ShareService {
-  /// Where the PWA is hosted. On web we reuse the current origin so local
-  /// testing "just works"; in production set this to your deployed domain.
-  static String baseUrl = kIsWeb ? Uri.base.origin : 'https://peekaboo.app';
+  /// Where the PWA is hosted. On web we reuse the page's own URL (origin +
+  /// base-href path, e.g. `/peekaboo/`) so links point back to the app no
+  /// matter where it's deployed — localhost, a project subpath, or a custom
+  /// domain. We strip any `#…` route fragment to get the clean app base.
+  static String get baseUrl {
+    if (!kIsWeb) return 'https://peekaboo.app';
+    final full = Uri.base.toString();
+    final hash = full.indexOf('#');
+    final base = hash >= 0 ? full.substring(0, hash) : full;
+    // Drop a trailing slash so linkFor can add exactly one.
+    return base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+  }
 
   static String linkFor(String token) => '$baseUrl/#/v/$token';
 
