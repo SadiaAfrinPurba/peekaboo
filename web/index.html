@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Privately share your baby's photos through a protected viewer.">
+
+  <!-- iOS meta tags & icons (enable "Add to Home Screen" as a standalone PWA) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Peekaboo">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Peekaboo</title>
+  <link rel="manifest" href="manifest.json">
+
+  <!-- On-device face detection for subject-aware watermarking (web).
+       Loaded lazily; the photo never leaves the browser. Mobile builds use
+       ML Kit instead. -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js" defer></script>
+  <script>
+    // Warm up the face model in the background so the first upload is fast.
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        try {
+          if (typeof blazeface !== 'undefined' && !window.__peekabooModel) {
+            blazeface.load().then(function (m) { window.__peekabooModel = m; });
+          }
+        } catch (e) {}
+      }, 1500);
+    });
+
+    // Returns normalized face boxes [{x,y,w,h}] (0..1) for a data-URL image.
+    // Never throws — returns [] on any failure so watermarking still works.
+    window.peekabooDetectFaces = async function (dataUrl) {
+      try {
+        if (typeof blazeface === 'undefined') return [];
+        if (!window.__peekabooModel) {
+          window.__peekabooModel = await blazeface.load();
+        }
+        const img = new Image();
+        img.src = dataUrl;
+        await img.decode();
+        const W = img.naturalWidth, H = img.naturalHeight;
+        if (!W || !H) return [];
+        const preds = await window.__peekabooModel.estimateFaces(img, false);
+        return preds.map(function (p) {
+          const x = p.topLeft[0] / W, y = p.topLeft[1] / H;
+          const w = (p.bottomRight[0] - p.topLeft[0]) / W;
+          const h = (p.bottomRight[1] - p.topLeft[1]) / H;
+          return { x: x, y: y, w: w, h: h };
+        });
+      } catch (e) {
+        return [];
+      }
+    };
+  </script>
+
+  <script>
+    // The value below is injected by flutter build, do not touch.
+    var serviceWorkerVersion = null;
+  </script>
+  <!-- This script adds the flutter initialization JS code -->
+  <script src="flutter.js" defer></script>
+</head>
+<body>
+  <script>
+    window.addEventListener('load', function(ev) {
+      // Download main.dart.js
+      _flutter.loader.loadEntrypoint({
+        serviceWorker: {
+          serviceWorkerVersion: serviceWorkerVersion,
+        },
+        onEntrypointLoaded: function(engineInitializer) {
+          engineInitializer.initializeEngine().then(function(appRunner) {
+            appRunner.runApp();
+          });
+        }
+      });
+    });
+  </script>
+</body>
+</html>
