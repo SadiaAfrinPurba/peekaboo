@@ -12,6 +12,12 @@ class Photo {
   final String id;
   final String caption;
   final DateTime addedAt;
+
+  /// When the photo was taken — drives the timeline and age label. May differ
+  /// from [addedAt] (upload time) for backfilled photos. Falls back to
+  /// [addedAt] via [date] when not set.
+  final DateTime? takenAt;
+
   final String storagePath;
   final String? imageUrl;
   final Uint8List? bytes;
@@ -25,10 +31,14 @@ class Photo {
     required this.caption,
     required this.addedAt,
     required this.storagePath,
+    this.takenAt,
     this.imageUrl,
     this.bytes,
     this.subjectRects = const [],
   });
+
+  /// The date to place this photo on the timeline / compute age from.
+  DateTime get date => takenAt ?? addedAt;
 
   /// Best available image source: in-memory bytes if we have them, else the
   /// signed network URL.
@@ -37,11 +47,17 @@ class Photo {
     return NetworkImage(imageUrl!);
   }
 
-  Photo copyWith({String? imageUrl, Uint8List? bytes, List<Rect>? subjectRects}) =>
+  Photo copyWith({
+    DateTime? takenAt,
+    String? imageUrl,
+    Uint8List? bytes,
+    List<Rect>? subjectRects,
+  }) =>
       Photo(
         id: id,
         caption: caption,
         addedAt: addedAt,
+        takenAt: takenAt ?? this.takenAt,
         storagePath: storagePath,
         imageUrl: imageUrl ?? this.imageUrl,
         bytes: bytes ?? this.bytes,

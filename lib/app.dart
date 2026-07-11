@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'data/vault.dart';
 import 'screens/gallery_screen.dart';
+import 'screens/recipient_gallery_screen.dart';
 import 'screens/recipient_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -34,18 +35,28 @@ class PeekabooApp extends StatelessWidget {
     );
   }
 
-  /// Routes normal navigation and shared links. A link like
-  /// `https://peekaboo.app/#/v/<token>` arrives here as `/v/<token>` and does
-  /// NOT require the owner to be signed in.
+  /// Routes normal navigation and shared links. Shared links do NOT require the
+  /// owner to be signed in:
+  ///  - `/#/g/<token>` → the permanent family gallery (all photos).
+  ///  - `/#/v/<token>` → a legacy single-photo share.
   Route<dynamic> _onGenerateRoute(RouteSettings settings) {
     final uri = Uri.parse(settings.name ?? '/');
 
-    if (uri.pathSegments.length == 2 && uri.pathSegments.first == 'v') {
+    if (uri.pathSegments.length == 2) {
+      final kind = uri.pathSegments.first;
       final token = uri.pathSegments[1];
-      return MaterialPageRoute(
-        settings: settings,
-        builder: (_) => RecipientScreen(token: token),
-      );
+      if (kind == 'g') {
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (_) => RecipientGalleryScreen(token: token),
+        );
+      }
+      if (kind == 'v') {
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (_) => RecipientScreen(token: token),
+        );
+      }
     }
 
     return MaterialPageRoute(

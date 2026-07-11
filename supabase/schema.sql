@@ -1,5 +1,5 @@
 -- ============================================================================
--- Peekaboo — Supabase schema, RLS policies, storage, and recipient RPC.
+-- Peekaboo — Supabase schema, RLS policies, storage, and recipient RPCs.
 -- Paste this whole file into the Supabase dashboard → SQL Editor → Run.
 -- Safe to run more than once (idempotent).
 -- ============================================================================
@@ -22,6 +22,31 @@ create table if not exists public.photos (
 alter table public.photos
   add column if not exists subject_rects jsonb not null default '[]'::jsonb;
 
+-- When the photo was taken (drives the timeline + age). Defaults to upload time
+-- so existing rows stay sensible; the owner can set a real date on upload.
+alter table public.photos
+  add column if not exists taken_at timestamptz not null default now();
+
+-- A long-lived signed URL so the family gallery link keeps working without a
+-- login. Refreshed by the owner's app well before it expires.
+alter table public.photos
+  add column if not exists signed_url text;
+alter table public.photos
+  add column if not exists signed_url_expires timestamptz;
+
+-- The single, permanent "family gallery" link. One row per owner. Sharing the
+-- token lets grandma/auntie/etc. browse every photo — no login, same link for
+-- everyone. Flip `active` to false to revoke it; set it back to re-enable.
+create table if not exists public.galleries (
+  owner_id   uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  token      text unique not null,
+  baby_name  text default '',
+  birthdate  date,
+  active     boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+-- --- Legacy single-photo shares (still supported for one-off /v/<token>) -----
 create table if not exists public.shares (
   token          text primary key,
   photo_id       text not null references public.photos(id) on delete cascade,
@@ -37,6 +62,7 @@ create table if not exists public.shares (
 -- --- Row-Level Security -----------------------------------------------------
 alter table public.photos enable row level security;
 alter table public.shares enable row level security;
+alter table public.galleries enable row level security;
 
 -- Owners can do everything with THEIR OWN rows; nobody else sees them.
 drop policy if exists "owner manages photos" on public.photos;
@@ -50,9 +76,15 @@ create policy "owner manages shares" on public.shares
   for all to authenticated
   using (owner_id = auth.uid())
   with check (owner_id = auth.uid());
--- NOTE: recipients have NO direct read policy on `shares`. They can only reach
--- a single row through the get_share() function below, which prevents anyone
--- from listing or guessing other people's shares.
+
+drop policy if exists "owner manages gallery" on public.galleries;
+create policy "owner manages gallery" on public.galleries
+  for all to authenticated
+  using (owner_id = auth.uid())
+  with check (owner_id = auth.uid());
+-- NOTE: recipients have NO direct read policy on these tables. They reach photos
+-- only through get_gallery()/get_share() below, so nobody can list or guess
+-- other people's content.
 
 -- --- Storage policies (owner-scoped by top folder = their user id) ----------
 drop policy if exists "owner uploads own objects" on storage.objects;
@@ -70,10 +102,55 @@ create policy "owner deletes own objects" on storage.objects
   for delete to authenticated
   using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
 
--- --- Recipient access: token -> single photo, no login ----------------------
--- SECURITY DEFINER so an anonymous visitor can resolve exactly one share by its
--- exact token. Returns image_url = null when expired / already viewed once.
--- (Dropped first because the return signature changed to add subject_rects.)
+-- --- Family gallery: token -> every photo, no login -------------------------
+-- SECURITY DEFINER so an anonymous visitor can resolve a gallery by its exact
+-- token. Returns baby name/birthdate (for age labels) + all photos newest-first.
+-- Returns {found:false} for a bad token and {active:false} when revoked.
+drop function if exists public.get_gallery(text);
+create or replace function public.get_gallery(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  g public.galleries;
+begin
+  select * into g from public.galleries where token = p_token;
+  if not found then
+    return jsonb_build_object('found', false);
+  end if;
+
+  if not g.active then
+    return jsonb_build_object(
+      'found', true, 'active', false, 'baby_name', g.baby_name);
+  end if;
+
+  return jsonb_build_object(
+    'found', true,
+    'active', true,
+    'baby_name', g.baby_name,
+    'birthdate', g.birthdate,
+    'photos', coalesce((
+      select jsonb_agg(
+        jsonb_build_object(
+          'id', p.id,
+          'caption', p.caption,
+          'taken_at', p.taken_at,
+          'image_url', p.signed_url,
+          'subject_rects', p.subject_rects
+        ) order by p.taken_at desc)
+      from public.photos p
+      where p.owner_id = g.owner_id and p.signed_url is not null
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+grant execute on function public.get_gallery(text) to anon, authenticated;
+
+-- --- Legacy single-photo recipient access -----------------------------------
+-- (Kept so old /v/<token> links still resolve. New sharing uses get_gallery.)
 drop function if exists public.get_share(text);
 create or replace function public.get_share(p_token text)
 returns table (recipient_name text, image_url text, view_once boolean, expired boolean, subject_rects jsonb)

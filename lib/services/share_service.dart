@@ -24,8 +24,42 @@ class ShareService {
 
   static String linkFor(String token) => '$baseUrl/#/v/$token';
 
+  /// The permanent family-gallery link — same URL for every recipient.
+  static String galleryLinkFor(String token) => '$baseUrl/#/g/$token';
+
   static String _message(String token, String recipient) =>
       'A photo for $recipient 💛 Tap to view in Peekaboo:\n${linkFor(token)}';
+
+  static String _galleryMessage(String token, String babyName) {
+    final who = babyName.trim().isEmpty ? 'our little one' : babyName.trim();
+    return 'Photos of $who 💛 Tap to open the private gallery in Peekaboo:\n'
+        '${galleryLinkFor(token)}';
+  }
+
+  /// Opens WhatsApp with the family-gallery link pre-filled.
+  static Future<bool> shareGalleryToWhatsApp(String token, String babyName) {
+    final url = Uri.parse(
+      'https://wa.me/?text=${Uri.encodeComponent(_galleryMessage(token, babyName))}',
+    );
+    return launchUrl(url, mode: LaunchMode.externalApplication);
+  }
+
+  /// Opens Telegram's share dialog for the family-gallery link.
+  static Future<bool> shareGalleryToTelegram(String token, String babyName) {
+    final url = Uri.parse(
+      'https://t.me/share/url?url=${Uri.encodeComponent(galleryLinkFor(token))}'
+      '&text=${Uri.encodeComponent(_galleryMessage(token, babyName).split('\n').first)}',
+    );
+    return launchUrl(url, mode: LaunchMode.externalApplication);
+  }
+
+  /// OS share sheet for the family-gallery link (Messenger, Instagram DM, …).
+  static Future<void> shareGalleryViaSystem(String token, String babyName) {
+    return Share.share(
+      _galleryMessage(token, babyName),
+      subject: 'Peekaboo — private photo gallery',
+    );
+  }
 
   /// Opens WhatsApp with the link pre-filled (works on web and mobile).
   static Future<bool> shareToWhatsApp(String token, String recipient) {

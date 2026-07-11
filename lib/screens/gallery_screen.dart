@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../data/vault.dart';
 import '../models/photo.dart';
 import '../theme/app_theme.dart';
+import 'family_link_sheet.dart';
 import 'protected_viewer_screen.dart';
 import 'share_sheet.dart';
 
@@ -21,13 +22,12 @@ class GalleryScreen extends StatelessWidget {
     );
     if (picked.isEmpty || !context.mounted) return;
 
-    // Ask for a caption only when adding a single photo.
-    String caption = '';
-    if (picked.length == 1) {
-      final c = await _askCaption(context);
-      if (c == null || !context.mounted) return; // cancelled / gone
-      caption = c;
-    }
+    // Ask when the photo(s) were taken (drives the timeline + age), plus a
+    // caption when it's a single photo.
+    final meta = await _askPhotoMeta(context, askCaption: picked.length == 1);
+    if (meta == null || !context.mounted) return; // cancelled / gone
+    final caption = meta.caption;
+    final takenAt = meta.date;
 
     final messenger = ScaffoldMessenger.of(context);
     final plural = picked.length > 1 ? '${picked.length} photos' : 'photo';
@@ -37,7 +37,7 @@ class GalleryScreen extends StatelessWidget {
     try {
       for (final file in picked) {
         final bytes = await file.readAsBytes();
-        await vault.addPhoto(bytes, caption);
+        await vault.addPhoto(bytes, caption, takenAt: takenAt);
       }
       messenger
         ..hideCurrentSnackBar()
@@ -49,30 +49,11 @@ class GalleryScreen extends StatelessWidget {
     }
   }
 
-  Future<String?> _askCaption(BuildContext context) {
-    final controller = TextEditingController();
-    return showDialog<String>(
+  Future<_PhotoMeta?> _askPhotoMeta(BuildContext context,
+      {required bool askCaption}) {
+    return showDialog<_PhotoMeta>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Add a caption'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'First steps 🐣'),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ''),
-            child: const Text('Skip'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
+      builder: (_) => _AddPhotoDialog(askCaption: askCaption),
     );
   }
 
@@ -102,6 +83,13 @@ class GalleryScreen extends StatelessWidget {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.group_outlined),
+            tooltip: 'Family gallery link',
+            onPressed: () => showFamilyLinkSheet(context, context.read<Vault>()),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _addPhotos(context),
@@ -212,6 +200,115 @@ class _PhotoCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Caption + "date taken" collected before an upload.
+class _PhotoMeta {
+  final String caption;
+  final DateTime date;
+  const _PhotoMeta(this.caption, this.date);
+}
+
+class _AddPhotoDialog extends StatefulWidget {
+  final bool askCaption;
+  const _AddPhotoDialog({required this.askCaption});
+
+  @override
+  State<_AddPhotoDialog> createState() => _AddPhotoDialogState();
+}
+
+class _AddPhotoDialogState extends State<_AddPhotoDialog> {
+  final _caption = TextEditingController();
+  DateTime _date = DateTime.now();
+
+  @override
+  void dispose() {
+    _caption.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(now.year - 18),
+      lastDate: now,
+      helpText: 'When was this taken?',
+    );
+    if (picked != null) setState(() => _date = picked);
+  }
+
+  String _label(DateTime d) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dd = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(dd).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      title: Text(widget.askCaption ? 'Photo details' : 'When were these taken?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.askCaption) ...[
+            TextField(
+              controller: _caption,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Caption (optional)',
+                hintText: 'First steps 🐣',
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: _pickDate,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceHigh,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.calendar_today_outlined,
+                      size: 18, color: AppTheme.textMuted),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Taken: ${_label(_date)}')),
+                  const Icon(Icons.edit_outlined,
+                      size: 16, color: AppTheme.textMuted),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () =>
+              Navigator.pop(context, _PhotoMeta(_caption.text, _date)),
+          child: const Text('Add'),
+        ),
+      ],
     );
   }
 }

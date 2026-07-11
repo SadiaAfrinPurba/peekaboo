@@ -76,6 +76,32 @@
   </script>
 
   <script>
+    // PWA install ("Add to Home Screen") bridge. Chrome/Android fires
+    // `beforeinstallprompt`; we stash it so the app can trigger the native
+    // dialog on demand (see lib/services/pwa_install_web.dart).
+    window.peekabooDeferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window.peekabooDeferredPrompt = e;
+    });
+    window.addEventListener('appinstalled', function () {
+      window.peekabooDeferredPrompt = null;
+    });
+    window.peekabooPromptInstall = async function () {
+      var p = window.peekabooDeferredPrompt;
+      if (!p) return 'unavailable';
+      p.prompt();
+      var choice = await p.userChoice;
+      window.peekabooDeferredPrompt = null;
+      return (choice && choice.outcome) ? choice.outcome : 'done';
+    };
+    window.peekabooIsStandalone = function () {
+      return window.matchMedia('(display-mode: standalone)').matches ||
+             window.navigator.standalone === true;
+    };
+  </script>
+
+  <script>
     // The value below is injected by flutter build, do not touch.
     var serviceWorkerVersion = null;
   </script>
