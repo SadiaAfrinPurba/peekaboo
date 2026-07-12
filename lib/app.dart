@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'screens/join_screen.dart';
 import 'screens/owner_home.dart';
 import 'screens/recipient_gallery_screen.dart';
 import 'screens/recipient_screen.dart';
@@ -50,6 +51,12 @@ class PeekabooApp extends StatelessWidget {
         return MaterialPageRoute(
           settings: settings,
           builder: (_) => RecipientScreen(token: token),
+        );
+      }
+      if (kind == 'join') {
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (_) => JoinScreen(token: token),
         );
       }
     }

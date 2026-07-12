@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/vault.dart';
 import '../models/photo.dart';
 import '../services/auth_service.dart';
+import '../services/share_service.dart';
 import '../theme/app_theme.dart';
 import 'family_link_sheet.dart';
 import 'protected_viewer_screen.dart';
@@ -58,6 +60,70 @@ class GalleryScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _inviteCoOwner(BuildContext context) async {
+    final vault = context.read<Vault>();
+    final messenger = ScaffoldMessenger.of(context);
+    String token;
+    try {
+      token = await vault.createInvite();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not create invite: $e')),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final url = ShareService.inviteLinkFor(token);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Invite a co-owner'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Send this link to your partner. They open it, create their own '
+              'account, and can then add photos to this same vault.',
+              style: TextStyle(color: AppTheme.textMuted, height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceHigh,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                url,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: url));
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('Invite link copied')),
+              );
+            },
+            child: const Text('Copy'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ShareService.shareInvite(token);
+            },
+            child: const Text('Share'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -95,6 +161,7 @@ class GalleryScreen extends StatelessWidget {
             icon: const Icon(Icons.account_circle_outlined),
             onSelected: (v) {
               if (v == 'signout') AuthService.signOut();
+              if (v == 'invite') _inviteCoOwner(context);
             },
             itemBuilder: (_) => [
               PopupMenuItem(
@@ -107,8 +174,24 @@ class GalleryScreen extends StatelessWidget {
               ),
               const PopupMenuDivider(),
               const PopupMenuItem(
+                value: 'invite',
+                child: Row(
+                  children: [
+                    Icon(Icons.group_add_outlined, size: 18),
+                    SizedBox(width: 10),
+                    Text('Invite co-owner'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
                 value: 'signout',
-                child: Text('Sign out'),
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded, size: 18),
+                    SizedBox(width: 10),
+                    Text('Sign out'),
+                  ],
+                ),
               ),
             ],
           ),

@@ -10,6 +10,8 @@ values ('photos', 'photos', false)
 on conflict (id) do nothing;
 
 -- --- Tables -----------------------------------------------------------------
+-- A photo's `owner_id` holds the VAULT id (which equals the founding owner's
+-- user id). Everyone who shares the vault is listed in `vault_members`.
 create table if not exists public.photos (
   id           text primary key,
   owner_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
@@ -18,25 +20,16 @@ create table if not exists public.photos (
   created_at   timestamptz not null default now()
 );
 
--- Face/subject regions (normalized 0..1 [x,y,w,h]) to keep watermark-free.
 alter table public.photos
   add column if not exists subject_rects jsonb not null default '[]'::jsonb;
-
--- When the photo was taken (drives the timeline + age). Defaults to upload time
--- so existing rows stay sensible; the owner can set a real date on upload.
 alter table public.photos
   add column if not exists taken_at timestamptz not null default now();
-
--- A long-lived signed URL so the family gallery link keeps working without a
--- login. Refreshed by the owner's app well before it expires.
 alter table public.photos
   add column if not exists signed_url text;
 alter table public.photos
   add column if not exists signed_url_expires timestamptz;
 
--- The single, permanent "family gallery" link. One row per owner. Sharing the
--- token lets grandma/auntie/etc. browse every photo — no login, same link for
--- everyone. Flip `active` to false to revoke it; set it back to re-enable.
+-- The permanent family gallery link (keyed by vault id = owner_id).
 create table if not exists public.galleries (
   owner_id   uuid primary key default auth.uid() references auth.users(id) on delete cascade,
   token      text unique not null,
@@ -46,7 +39,26 @@ create table if not exists public.galleries (
   created_at timestamptz not null default now()
 );
 
--- --- Legacy single-photo shares (still supported for one-off /v/<token>) -----
+-- Who can access a vault. vault_id = the founding owner's user id; each member
+-- (the owner + any invited co-owners, e.g. a spouse) gets a row here.
+create table if not exists public.vault_members (
+  vault_id   uuid not null,
+  member_id  uuid not null references auth.users(id) on delete cascade,
+  role       text not null default 'coowner',
+  created_at timestamptz not null default now(),
+  primary key (vault_id, member_id)
+);
+
+-- Pending invites to join a vault as a co-owner.
+create table if not exists public.vault_invites (
+  token      text primary key,
+  vault_id   uuid not null,
+  created_by uuid not null default auth.uid(),
+  expires_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- Legacy single-photo shares (still supported for one-off /v/<token>).
 create table if not exists public.shares (
   token          text primary key,
   photo_id       text not null references public.photos(id) on delete cascade,
@@ -59,17 +71,53 @@ create table if not exists public.shares (
   expires_at     timestamptz
 );
 
--- --- Row-Level Security -----------------------------------------------------
+-- --- Row-Level Security ------------------------------------------------------
 alter table public.photos enable row level security;
-alter table public.shares enable row level security;
 alter table public.galleries enable row level security;
+alter table public.vault_members enable row level security;
+alter table public.vault_invites enable row level security;
+alter table public.shares enable row level security;
 
--- Owners can do everything with THEIR OWN rows; nobody else sees them.
+-- vault_members: you can see your OWN membership rows (simple, no recursion),
+-- and create your OWN self-vault. Joining someone else's vault happens only
+-- through redeem_invite() (SECURITY DEFINER), never a direct insert.
+drop policy if exists "see own memberships" on public.vault_members;
+create policy "see own memberships" on public.vault_members
+  for select to authenticated
+  using (member_id = auth.uid());
+
+drop policy if exists "create own self vault" on public.vault_members;
+create policy "create own self vault" on public.vault_members
+  for insert to authenticated
+  with check (member_id = auth.uid() and vault_id = auth.uid());
+
+-- Photos & galleries: any member of the vault can manage them.
 drop policy if exists "owner manages photos" on public.photos;
-create policy "owner manages photos" on public.photos
+drop policy if exists "members manage vault photos" on public.photos;
+create policy "members manage vault photos" on public.photos
   for all to authenticated
-  using (owner_id = auth.uid())
-  with check (owner_id = auth.uid());
+  using (owner_id in (
+    select vault_id from public.vault_members where member_id = auth.uid()))
+  with check (owner_id in (
+    select vault_id from public.vault_members where member_id = auth.uid()));
+
+drop policy if exists "owner manages gallery" on public.galleries;
+drop policy if exists "members manage gallery" on public.galleries;
+create policy "members manage gallery" on public.galleries
+  for all to authenticated
+  using (owner_id in (
+    select vault_id from public.vault_members where member_id = auth.uid()))
+  with check (owner_id in (
+    select vault_id from public.vault_members where member_id = auth.uid()));
+
+-- Invites: any member of the vault can create/see/delete its invites.
+drop policy if exists "members manage invites" on public.vault_invites;
+create policy "members manage invites" on public.vault_invites
+  for all to authenticated
+  using (vault_id in (
+    select vault_id from public.vault_members where member_id = auth.uid()))
+  with check (vault_id in (
+    select vault_id from public.vault_members where member_id = auth.uid()));
 
 drop policy if exists "owner manages shares" on public.shares;
 create policy "owner manages shares" on public.shares
@@ -77,35 +125,64 @@ create policy "owner manages shares" on public.shares
   using (owner_id = auth.uid())
   with check (owner_id = auth.uid());
 
-drop policy if exists "owner manages gallery" on public.galleries;
-create policy "owner manages gallery" on public.galleries
-  for all to authenticated
-  using (owner_id = auth.uid())
-  with check (owner_id = auth.uid());
--- NOTE: recipients have NO direct read policy on these tables. They reach photos
--- only through get_gallery()/get_share() below, so nobody can list or guess
--- other people's content.
-
--- --- Storage policies (owner-scoped by top folder = their user id) ----------
+-- --- Storage policies (folder = vault id; any member may read/write) ---------
 drop policy if exists "owner uploads own objects" on storage.objects;
-create policy "owner uploads own objects" on storage.objects
+drop policy if exists "members upload vault objects" on storage.objects;
+create policy "members upload vault objects" on storage.objects
   for insert to authenticated
-  with check (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+  with check (bucket_id = 'photos' and (storage.foldername(name))[1] in (
+    select vault_id::text from public.vault_members where member_id = auth.uid()));
 
 drop policy if exists "owner reads own objects" on storage.objects;
-create policy "owner reads own objects" on storage.objects
+drop policy if exists "members read vault objects" on storage.objects;
+create policy "members read vault objects" on storage.objects
   for select to authenticated
-  using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+  using (bucket_id = 'photos' and (storage.foldername(name))[1] in (
+    select vault_id::text from public.vault_members where member_id = auth.uid()));
 
 drop policy if exists "owner deletes own objects" on storage.objects;
-create policy "owner deletes own objects" on storage.objects
+drop policy if exists "members delete vault objects" on storage.objects;
+create policy "members delete vault objects" on storage.objects
   for delete to authenticated
-  using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+  using (bucket_id = 'photos' and (storage.foldername(name))[1] in (
+    select vault_id::text from public.vault_members where member_id = auth.uid()));
+
+-- --- Join a vault via an invite token (SECURITY DEFINER) --------------------
+-- The invited (signed-in) user redeems a token to become a co-owner. Runs as
+-- definer so it can insert the membership row the caller couldn't insert itself.
+drop function if exists public.redeem_invite(text);
+create or replace function public.redeem_invite(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inv public.vault_invites;
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('ok', false, 'error', 'signin_required');
+  end if;
+
+  select * into inv from public.vault_invites where token = p_token;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'invalid');
+  end if;
+  if inv.expires_at is not null and now() > inv.expires_at then
+    return jsonb_build_object('ok', false, 'error', 'expired');
+  end if;
+
+  insert into public.vault_members (vault_id, member_id, role)
+  values (inv.vault_id, auth.uid(), 'coowner')
+  on conflict (vault_id, member_id) do nothing;
+
+  return jsonb_build_object('ok', true, 'vault_id', inv.vault_id);
+end;
+$$;
+
+grant execute on function public.redeem_invite(text) to authenticated;
 
 -- --- Family gallery: token -> every photo, no login -------------------------
--- SECURITY DEFINER so an anonymous visitor can resolve a gallery by its exact
--- token. Returns baby name/birthdate (for age labels) + all photos newest-first.
--- Returns {found:false} for a bad token and {active:false} when revoked.
 drop function if exists public.get_gallery(text);
 create or replace function public.get_gallery(p_token text)
 returns jsonb
@@ -150,7 +227,6 @@ $$;
 grant execute on function public.get_gallery(text) to anon, authenticated;
 
 -- --- Legacy single-photo recipient access -----------------------------------
--- (Kept so old /v/<token> links still resolve. New sharing uses get_gallery.)
 drop function if exists public.get_share(text);
 create or replace function public.get_share(p_token text)
 returns table (recipient_name text, image_url text, view_once boolean, expired boolean, subject_rects jsonb)
@@ -164,7 +240,7 @@ declare
 begin
   select * into s from public.shares where token = p_token;
   if not found then
-    return;                       -- no rows -> "link not found"
+    return;
   end if;
 
   if (s.expires_at is not null and now() > s.expires_at)

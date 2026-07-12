@@ -8,7 +8,11 @@ import '../config/supabase_config.dart';
 import '../models/family_gallery.dart';
 import '../models/photo.dart';
 import '../models/share_link.dart';
+import '../services/local_store.dart';
 import '../services/subject_detector.dart';
+
+/// localStorage key holding an invite token to redeem on next sign-in.
+const String kPendingInviteKey = 'peekaboo_pending_invite';
 
 /// Backend-backed store for the signed-in owner's photos and share links.
 /// Talks to Supabase: private Storage bucket + `photos`/`shares`/`galleries`
@@ -24,9 +28,14 @@ class Vault extends ChangeNotifier {
   /// The owner's single permanent family-gallery link (created on first load).
   FamilyGallery? gallery;
 
+  /// The vault this user is currently working in. Equals the founding owner's
+  /// id; a co-owner (spouse) resolves to the vault they were invited to.
+  String? _vaultId;
+
   List<Photo> get photos => List.unmodifiable(_photos);
 
   String get _uid => _db.auth.currentUser!.id;
+  String get _vault => _vaultId!;
 
   /// Stored signed URLs are minted for a year so the family link keeps working
   /// without a login; we refresh any that fall inside [_refreshBefore] of
@@ -48,11 +57,14 @@ class Vault extends ChangeNotifier {
     }
 
     try {
+      await _redeemPendingInvite();
+      await _resolveVault();
       await _loadGallery();
 
       final rows = await _db
           .from('photos')
           .select()
+          .eq('owner_id', _vault)
           .order('taken_at', ascending: false);
 
       final list = <Photo>[];
@@ -82,15 +94,60 @@ class Vault extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Loads the owner's family gallery, creating it (with a fresh token) the
+  /// Redeems an invite token saved before sign-in (a co-owner opening an invite
+  /// link, then creating their account), joining the shared vault.
+  Future<void> _redeemPendingInvite() async {
+    final token = getLocal(kPendingInviteKey);
+    if (token == null || token.isEmpty) return;
+    try {
+      await _db.rpc('redeem_invite', params: {'p_token': token});
+    } catch (_) {
+      // Invalid/expired invite — nothing to join; fall through to own vault.
+    }
+    setLocal(kPendingInviteKey, '');
+  }
+
+  /// Determines which vault this user works in. Prefers a vault they were
+  /// invited to (co-owner) over their own; seeds a self-vault on first run.
+  Future<void> _resolveVault() async {
+    final rows =
+        await _db.from('vault_members').select('vault_id').eq('member_id', _uid);
+    final ids = [for (final r in rows) r['vault_id'] as String];
+    final invited = ids.where((v) => v != _uid).toList();
+    if (invited.isNotEmpty) {
+      _vaultId = invited.first;
+    } else if (ids.isNotEmpty) {
+      _vaultId = _uid;
+    } else {
+      // First run for this account: it owns its own vault.
+      await _db.from('vault_members').insert({
+        'vault_id': _uid,
+        'member_id': _uid,
+        'role': 'owner',
+      });
+      _vaultId = _uid;
+    }
+  }
+
+  /// Creates a co-owner invite and returns its token (shareable as a link).
+  Future<String> createInvite() async {
+    final token = _id(20);
+    await _db.from('vault_invites').insert({
+      'token': token,
+      'vault_id': _vault,
+    });
+    return token;
+  }
+
+  /// Loads the vault's family gallery, creating it (with a fresh token) the
   /// first time. Guarantees [gallery] is non-null on success.
   Future<void> _loadGallery() async {
     final rows =
-        await _db.from('galleries').select().eq('owner_id', _uid).limit(1);
+        await _db.from('galleries').select().eq('owner_id', _vault).limit(1);
     if (rows.isEmpty) {
       final token = _id(24);
       await _db.from('galleries').insert({
-        'owner_id': _uid,
+        'owner_id': _vault,
         'token': token,
         'active': true,
       });
@@ -136,7 +193,7 @@ class Vault extends ChangeNotifier {
     DateTime? takenAt,
   }) async {
     final id = _id(12);
-    final path = '$_uid/$id.jpg';
+    final path = '$_vault/$id.jpg';
     final taken = takenAt ?? DateTime.now();
 
     // Detect faces on-device so the watermark can leave them clear.
@@ -161,7 +218,7 @@ class Vault extends ChangeNotifier {
 
     await _db.from('photos').insert({
       'id': id,
-      'owner_id': _uid,
+      'owner_id': _vault,
       'caption': caption.trim(),
       'storage_path': path,
       'taken_at': taken.toIso8601String(),
@@ -204,7 +261,7 @@ class Vault extends ChangeNotifier {
     if (name != null) update['baby_name'] = name.trim();
     if (birthdate != null) update['birthdate'] = _dateOnly(birthdate);
     if (update.isEmpty) return;
-    await _db.from('galleries').update(update).eq('owner_id', _uid);
+    await _db.from('galleries').update(update).eq('owner_id', _vault);
     gallery = g.copyWith(
       babyName: name ?? g.babyName,
       birthdate: birthdate ?? g.birthdate,
@@ -216,7 +273,7 @@ class Vault extends ChangeNotifier {
   Future<void> setGalleryActive(bool active) async {
     final g = gallery;
     if (g == null) return;
-    await _db.from('galleries').update({'active': active}).eq('owner_id', _uid);
+    await _db.from('galleries').update({'active': active}).eq('owner_id', _vault);
     gallery = g.copyWith(active: active);
     notifyListeners();
   }

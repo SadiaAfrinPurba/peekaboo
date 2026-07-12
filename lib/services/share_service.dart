@@ -27,6 +27,18 @@ class ShareService {
   /// The permanent family-gallery link — same URL for every recipient.
   static String galleryLinkFor(String token) => '$baseUrl/#/g/$token';
 
+  /// A one-time invite link for a co-owner (spouse) to join the shared vault.
+  static String inviteLinkFor(String token) => '$baseUrl/#/join/$token';
+
+  /// Shares a co-owner invite link via the OS share sheet.
+  static Future<void> shareInvite(String token) {
+    return Share.share(
+      'Join our private Peekaboo vault so you can add photos too:\n'
+      '${inviteLinkFor(token)}',
+      subject: 'Join our Peekaboo vault',
+    );
+  }
+
   static String _message(String token, String recipient) =>
       'A photo for $recipient 💛 Tap to view in Peekaboo:\n${linkFor(token)}';
 
