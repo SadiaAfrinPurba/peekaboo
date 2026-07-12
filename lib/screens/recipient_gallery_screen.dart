@@ -30,6 +30,14 @@ class _RecipientGalleryScreenState extends State<RecipientGalleryScreen> {
   void initState() {
     super.initState();
     _future = fetchGallery(widget.token);
+    // Rename the installable app to the baby's name as soon as the gallery
+    // resolves — before the name prompt — so "Add to Home Screen" always uses
+    // it, even on the very first screen.
+    _future.then((feed) {
+      if (feed.active && feed.babyName.isNotEmpty) {
+        PwaInstall.setAppName(feed.babyName);
+      }
+    });
     _viewerName = ViewerIdentity.name;
   }
 
@@ -199,10 +207,8 @@ class _GalleryViewState extends State<_GalleryView> {
   @override
   void initState() {
     super.initState();
-    // Install the app under the baby's name (home-screen label), not "Peekaboo".
-    if (widget.feed.babyName.isNotEmpty) {
-      PwaInstall.setAppName(widget.feed.babyName);
-    }
+    // (The app name is set to the baby's name up in RecipientGalleryScreen, as
+    // soon as the gallery loads.)
     // Offer "Add to Home Screen" on the first visit (once), where supported.
     final dismissed = getLocal(_installDismissedKey) == '1';
     final canOffer = !PwaInstall.isStandalone &&
