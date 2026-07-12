@@ -51,3 +51,9 @@ Future<String> promptInstall() async {
     return 'unavailable';
   }
 }
+
+void setAppName(String name) {
+  try {
+    js_util.callMethod(html.window, 'peekabooSetAppName', [name]);
+  } catch (_) {}
+}

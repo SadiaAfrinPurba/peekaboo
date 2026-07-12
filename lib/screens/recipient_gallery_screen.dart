@@ -199,12 +199,19 @@ class _GalleryViewState extends State<_GalleryView> {
   @override
   void initState() {
     super.initState();
+    // Install the app under the baby's name (home-screen label), not "Peekaboo".
+    if (widget.feed.babyName.isNotEmpty) {
+      PwaInstall.setAppName(widget.feed.babyName);
+    }
     // Offer "Add to Home Screen" on the first visit (once), where supported.
     final dismissed = getLocal(_installDismissedKey) == '1';
     final canOffer = !PwaInstall.isStandalone &&
         (PwaInstall.canInstall || PwaInstall.isIosSafari);
     _showInstall = canOffer && !dismissed;
   }
+
+  String get _appName =>
+      widget.feed.babyName.isEmpty ? 'Peekaboo' : widget.feed.babyName;
 
   void _dismissInstall() {
     setLocal(_installDismissedKey, '1');
@@ -218,7 +225,7 @@ class _GalleryViewState extends State<_GalleryView> {
     } else if (PwaInstall.isIosSafari) {
       showDialog<void>(
         context: context,
-        builder: (_) => const _IosInstallHint(),
+        builder: (_) => _IosInstallHint(appName: _appName),
       );
       _dismissInstall();
     }
@@ -274,7 +281,11 @@ class _GalleryViewState extends State<_GalleryView> {
           : Column(
               children: [
                 if (_showInstall)
-                  _InstallBanner(onAdd: _install, onDismiss: _dismissInstall),
+                  _InstallBanner(
+                    appName: _appName,
+                    onAdd: _install,
+                    onDismiss: _dismissInstall,
+                  ),
                 Expanded(
                   child: ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -423,9 +434,11 @@ class _GalleryTile extends StatelessWidget {
 }
 
 class _InstallBanner extends StatelessWidget {
+  final String appName;
   final VoidCallback onAdd;
   final VoidCallback onDismiss;
-  const _InstallBanner({required this.onAdd, required this.onDismiss});
+  const _InstallBanner(
+      {required this.appName, required this.onAdd, required this.onDismiss});
 
   @override
   Widget build(BuildContext context) {
@@ -442,10 +455,10 @@ class _InstallBanner extends StatelessWidget {
           const Icon(Icons.add_to_home_screen_rounded,
               color: AppTheme.primary),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Add Peekaboo to your home screen for one-tap access.',
-              style: TextStyle(height: 1.3, fontWeight: FontWeight.w600),
+              'Add $appName to your home screen for one-tap access.',
+              style: const TextStyle(height: 1.3, fontWeight: FontWeight.w600),
             ),
           ),
           TextButton(onPressed: onAdd, child: const Text('Add')),
@@ -461,27 +474,28 @@ class _InstallBanner extends StatelessWidget {
 }
 
 class _IosInstallHint extends StatelessWidget {
-  const _IosInstallHint();
+  final String appName;
+  const _IosInstallHint({required this.appName});
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: AppTheme.surface,
       title: const Text('Add to Home Screen'),
-      content: const Column(
+      content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('On iPhone/iPad, add Peekaboo like this:',
-              style: TextStyle(height: 1.4)),
-          SizedBox(height: 12),
-          Row(children: [
+          Text('On iPhone/iPad, add $appName like this:',
+              style: const TextStyle(height: 1.4)),
+          const SizedBox(height: 12),
+          const Row(children: [
             Icon(Icons.ios_share_rounded, size: 20),
             SizedBox(width: 10),
             Expanded(child: Text('1. Tap the Share button in Safari')),
           ]),
-          SizedBox(height: 8),
-          Row(children: [
+          const SizedBox(height: 8),
+          const Row(children: [
             Icon(Icons.add_box_outlined, size: 20),
             SizedBox(width: 10),
             Expanded(child: Text('2. Choose "Add to Home Screen"')),

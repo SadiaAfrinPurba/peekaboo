@@ -20,4 +20,9 @@ class PwaInstall {
   /// Shows the native install prompt. Returns the outcome string
   /// ('accepted' / 'dismissed' / 'unavailable').
   static Future<String> promptInstall() => impl.promptInstall();
+
+  /// Renames the installable app (home-screen label + PWA manifest name) at
+  /// runtime — used so recipients install it under the baby's name instead of
+  /// "Peekaboo". No-op off the web.
+  static void setAppName(String name) => impl.setAppName(name);
 }
